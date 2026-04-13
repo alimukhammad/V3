@@ -138,6 +138,39 @@
       white-space: nowrap;
     }
 
+    .filters {
+      padding: 10px 24px 14px 24px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(210px, 1fr)) auto auto;
+      gap: 10px;
+      align-items: end;
+      border-bottom: 1px solid var(--line);
+      background: rgba(2, 6, 23, 0.32);
+    }
+
+    .filter-group {
+      min-width: 0;
+    }
+
+    .range-inputs {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 6px;
+      align-items: center;
+      margin-top: 6px;
+    }
+
+    .range-sep {
+      color: var(--muted);
+      font-size: 0.75rem;
+      text-align: center;
+      padding: 0 4px;
+    }
+
+    .btn-muted {
+      background: linear-gradient(140deg, #334155, #475569);
+    }
+
     .status-row {
       padding: 10px 24px;
       font-size: 0.84rem;
@@ -290,6 +323,10 @@
         grid-template-columns: 1fr;
         gap: 8px;
       }
+      .filters {
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
       .chip, .btn {
         width: 100%;
       }
@@ -301,7 +338,7 @@
   <div class="app">
     <div class="header">
       <h1>Upcoming Week Earnings Dashboard</h1>
-      <p>Polygon-powered earnings calendar with probability analytics for upcoming reports.</p>
+      <p>Polygon-powered earnings calendar with dynamic range filters for Current Price, Change %, and Confidence.</p>
     </div>
 
     <div class="controls">
@@ -312,6 +349,41 @@
       <div id="weekRangeLabel" class="chip">Week: --</div>
       <button id="refreshBtn" class="btn" type="button">Refresh Data</button>
       <button id="toggleKeyBtn" class="btn" type="button" style="background: linear-gradient(140deg, #334155, #475569);">Show Key</button>
+    </div>
+
+    <div class="filters">
+      <div class="filter-group">
+        <span class="control-label">Current Price Range ($)</span>
+        <div class="range-inputs">
+          <input id="priceMinInput" type="number" step="0.01" placeholder="Min">
+          <span class="range-sep">to</span>
+          <input id="priceMaxInput" type="number" step="0.01" placeholder="Max">
+        </div>
+      </div>
+      <div class="filter-group">
+        <span class="control-label">Change % Range</span>
+        <div class="range-inputs">
+          <input id="changeMinInput" type="number" step="0.01" placeholder="Min">
+          <span class="range-sep">to</span>
+          <input id="changeMaxInput" type="number" step="0.01" placeholder="Max">
+        </div>
+      </div>
+      <div class="filter-group">
+        <span class="control-label">Confidence % Range</span>
+        <div class="range-inputs">
+          <input id="confidenceMinInput" type="number" step="1" placeholder="Min">
+          <span class="range-sep">to</span>
+          <input id="confidenceMaxInput" type="number" step="1" placeholder="Max">
+        </div>
+      </div>
+      <div class="filter-group">
+        <span class="control-label">Avg Post D (0-10)</span>
+        <div class="range-inputs" style="grid-template-columns: 1fr;">
+          <input id="avgPostDInput" type="number" min="0" max="10" step="1" placeholder="Enter day (1-10)">
+        </div>
+      </div>
+      <button id="applyFiltersBtn" class="btn" type="button">Apply Ranges</button>
+      <button id="resetFiltersBtn" class="btn btn-muted" type="button">Reset Ranges</button>
     </div>
 
     <div class="status-row">
@@ -331,12 +403,15 @@
             <th>Current Change %</th>
             <th>Prob Up %</th>
             <th>Confidence</th>
+            <th>Avg Post 1D</th>
+            <th>Avg Post 5D</th>
+            <th>Avg Post 10D</th>
             <th>Sample Size</th>
             <th>Notes</th>
           </tr>
         </thead>
         <tbody id="resultsBody">
-          <tr><td colspan="8" class="empty">No data loaded.</td></tr>
+          <tr><td colspan="11" class="empty">No data loaded.</td></tr>
         </tbody>
       </table>
     </div>
@@ -349,6 +424,16 @@
       const API_BASE = "https://api.polygon.io";
       const ALPHA_VANTAGE_EARNINGS_URL = "https://www.alphavantage.co/query?function=EARNINGS_CALENDAR&horizon=3month&apikey=demo";
       const STORAGE_KEY = "polygon_api_key_v3_dashboard";
+      const FILTER_STORAGE_KEY = "dashboard_range_filters_v1";
+      const DEFAULT_FILTERS = Object.freeze({
+        priceMin: 0,
+        priceMax: 100,
+        changeMin: -100,
+        changeMax: 100,
+        confidenceMin: 0,
+        confidenceMax: 100,
+        avgPostD: 0
+      });
       const HISTORY_TARGET = 8;
       const ANALYSIS_CONCURRENCY = 3;
       const NEWS_LIMIT = 20;
@@ -361,6 +446,15 @@
       const state = {
         apiKey: "",
         week: { start: "", end: "", label: "" },
+        filters: {
+          priceMin: DEFAULT_FILTERS.priceMin,
+          priceMax: DEFAULT_FILTERS.priceMax,
+          changeMin: DEFAULT_FILTERS.changeMin,
+          changeMax: DEFAULT_FILTERS.changeMax,
+          confidenceMin: DEFAULT_FILTERS.confidenceMin,
+          confidenceMax: DEFAULT_FILTERS.confidenceMax,
+          avgPostD: DEFAULT_FILTERS.avgPostD
+        },
         rows: []
       };
 
@@ -368,6 +462,15 @@
         apiKeyInput: document.getElementById("apiKeyInput"),
         toggleKeyBtn: document.getElementById("toggleKeyBtn"),
         refreshBtn: document.getElementById("refreshBtn"),
+        applyFiltersBtn: document.getElementById("applyFiltersBtn"),
+        resetFiltersBtn: document.getElementById("resetFiltersBtn"),
+        priceMinInput: document.getElementById("priceMinInput"),
+        priceMaxInput: document.getElementById("priceMaxInput"),
+        changeMinInput: document.getElementById("changeMinInput"),
+        changeMaxInput: document.getElementById("changeMaxInput"),
+        confidenceMinInput: document.getElementById("confidenceMinInput"),
+        confidenceMaxInput: document.getElementById("confidenceMaxInput"),
+        avgPostDInput: document.getElementById("avgPostDInput"),
         weekRangeLabel: document.getElementById("weekRangeLabel"),
         statusText: document.getElementById("statusText"),
         errorBanner: document.getElementById("errorBanner"),
@@ -379,6 +482,8 @@
       function init() {
         state.apiKey = localStorage.getItem(STORAGE_KEY) || "";
         els.apiKeyInput.value = state.apiKey;
+        loadFilters();
+        hydrateFilterInputs();
         state.week = getUpcomingFullWeekRangeET(new Date());
         els.weekRangeLabel.textContent = "Week: " + state.week.label;
         bindEvents();
@@ -391,6 +496,8 @@
       function bindEvents() {
         els.refreshBtn.addEventListener("click", loadDashboard);
         els.toggleKeyBtn.addEventListener("click", toggleKeyVisibility);
+        els.applyFiltersBtn.addEventListener("click", applyFiltersFromInputs);
+        els.resetFiltersBtn.addEventListener("click", resetFilters);
         els.apiKeyInput.addEventListener("keydown", function (event) {
           if (event.key === "Enter") {
             saveApiKey();
@@ -398,6 +505,14 @@
           }
         });
         els.apiKeyInput.addEventListener("blur", saveApiKey);
+
+        getFilterInputs().forEach(function (inputEl) {
+          inputEl.addEventListener("keydown", function (event) {
+            if (event.key === "Enter") {
+              applyFiltersFromInputs();
+            }
+          });
+        });
       }
 
       function toggleKeyVisibility() {
@@ -417,6 +532,7 @@
 
       async function loadDashboard() {
         saveApiKey();
+        applyFiltersFromInputs(false);
         clearError();
         state.week = getUpcomingFullWeekRangeET(new Date());
         els.weekRangeLabel.textContent = "Week: " + state.week.label;
@@ -441,7 +557,7 @@
 
           const deduped = dedupeUpcomingEarnings(upcoming);
           const tickers = deduped.map(function (x) { return x.ticker; });
-          setStatus("Fetching latest daily prices...");
+          setStatus("Fetching latest daily prices and applying price/change ranges...");
           const priceMap = await fetchPriceMapForTickers(tickers);
 
           let rows = deduped.map(function (event) {
@@ -458,11 +574,25 @@
               currentChangePct: currentChangePct,
               probUpPct: null,
               confidencePct: null,
+              avg1dPct: null,
+              avg5dPct: null,
+              avg10dPct: null,
+              avgByDayPct: {},
               sampleSize: 0,
               notes: "Analyzing...",
               _sortDate: event.reportDate || "9999-12-31"
             };
           });
+
+          rows = rows.filter(function (row) {
+            return passesPriceAndChangeFilters(row);
+          });
+
+          if (!rows.length) {
+            renderEmptyRow("No rows match active price/change ranges: " + formatFilterSummary());
+            setStatus("No ticker passed the active price/change ranges.");
+            return;
+          }
 
           rows.sort(sortRows);
           state.rows = rows;
@@ -474,6 +604,10 @@
             const analytics = await computeTickerAnalytics(row.ticker);
             row.probUpPct = analytics.probUpPct;
             row.confidencePct = analytics.confidencePct;
+            row.avg1dPct = analytics.avg1dPct;
+            row.avg5dPct = analytics.avg5dPct;
+            row.avg10dPct = analytics.avg10dPct;
+            row.avgByDayPct = analytics.avgByDayPct || {};
             row.sampleSize = analytics.sampleSize;
             row.notes = analytics.notes;
 
@@ -486,6 +620,7 @@
           setStatus(
             "Done: " + state.rows.length +
             " candidate tickers for " + state.week.label +
+            ". Visible with ranges: " + countVisibleRows(state.rows) +
             "."
           );
         } catch (error) {
@@ -501,8 +636,18 @@
       function setLoading(isLoading) {
         els.refreshBtn.disabled = isLoading;
         els.apiKeyInput.disabled = isLoading;
+        els.applyFiltersBtn.disabled = isLoading;
+        els.resetFiltersBtn.disabled = isLoading;
+        getFilterInputs().forEach(function (inputEl) {
+          inputEl.disabled = isLoading;
+        });
         if (!isLoading) {
           els.apiKeyInput.disabled = false;
+          els.applyFiltersBtn.disabled = false;
+          els.resetFiltersBtn.disabled = false;
+          getFilterInputs().forEach(function (inputEl) {
+            inputEl.disabled = false;
+          });
         }
       }
 
@@ -533,6 +678,9 @@
             "<td><span class='skeleton'></span></td>" +
             "<td><span class='skeleton'></span></td>" +
             "<td><span class='skeleton'></span></td>" +
+            "<td><span class='skeleton'></span></td>" +
+            "<td><span class='skeleton'></span></td>" +
+            "<td><span class='skeleton'></span></td>" +
             "</tr>"
           );
         }
@@ -540,7 +688,7 @@
       }
 
       function renderEmptyRow(message) {
-        els.resultsBody.innerHTML = "<tr><td colspan='8' class='empty'>" + escapeHtml(message) + "</td></tr>";
+        els.resultsBody.innerHTML = "<tr><td colspan='11' class='empty'>" + escapeHtml(message) + "</td></tr>";
       }
 
       function renderRows(rows) {
@@ -573,6 +721,9 @@
             "<td>" + renderPctPill(row.currentChangePct) + "</td>" +
             "<td><span class='score'>" + fmtPct(row.probUpPct, 1) + "</span></td>" +
             "<td>" + fmtPct(row.confidencePct, 0) + "</td>" +
+            "<td>" + renderPctPill(row.avg1dPct) + "</td>" +
+            "<td>" + renderPctPill(row.avg5dPct) + "</td>" +
+            "<td>" + renderPctPill(row.avg10dPct) + "</td>" +
             "<td>" + (Number.isFinite(row.sampleSize) ? String(row.sampleSize) : "N/A") + "</td>" +
             "<td class='muted'>" + escapeHtml(row.notes || "N/A") + "</td>" +
             "</tr>"
@@ -594,7 +745,8 @@
             changeMin: parsed.changeMin,
             changeMax: parsed.changeMax,
             confidenceMin: parsed.confidenceMin,
-            confidenceMax: parsed.confidenceMax
+            confidenceMax: parsed.confidenceMax,
+            avgPostD: parsed.avgPostD
           });
         } catch (_) {
           state.filters = normalizeFilters(DEFAULT_FILTERS);
@@ -602,12 +754,13 @@
       }
 
       function hydrateFilterInputs() {
-        els.priceMinInput.value = boundToInput(state.filters.priceMin);
-        els.priceMaxInput.value = boundToInput(state.filters.priceMax);
-        els.changeMinInput.value = boundToInput(state.filters.changeMin);
-        els.changeMaxInput.value = boundToInput(state.filters.changeMax);
-        els.confidenceMinInput.value = boundToInput(state.filters.confidenceMin);
-        els.confidenceMaxInput.value = boundToInput(state.filters.confidenceMax);
+        els.priceMinInput.value = String(state.filters.priceMin);
+        els.priceMaxInput.value = String(state.filters.priceMax);
+        els.changeMinInput.value = String(state.filters.changeMin);
+        els.changeMaxInput.value = String(state.filters.changeMax);
+        els.confidenceMinInput.value = String(state.filters.confidenceMin);
+        els.confidenceMaxInput.value = String(state.filters.confidenceMax);
+        els.avgPostDInput.value = String(state.filters.avgPostD);
       }
 
       function applyFiltersFromInputs(shouldRender) {
@@ -618,7 +771,8 @@
           changeMin: parseInputNumberOrNull(els.changeMinInput.value),
           changeMax: parseInputNumberOrNull(els.changeMaxInput.value),
           confidenceMin: parseInputNumberOrNull(els.confidenceMinInput.value),
-          confidenceMax: parseInputNumberOrNull(els.confidenceMaxInput.value)
+          confidenceMax: parseInputNumberOrNull(els.confidenceMaxInput.value),
+          avgPostD: parseInputNumberOrNull(els.avgPostDInput.value)
         });
         hydrateFilterInputs();
         localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(state.filters));
@@ -647,20 +801,22 @@
         const price = normalizeRange(input.priceMin, input.priceMax, DEFAULT_FILTERS.priceMin, DEFAULT_FILTERS.priceMax);
         const change = normalizeRange(input.changeMin, input.changeMax, DEFAULT_FILTERS.changeMin, DEFAULT_FILTERS.changeMax);
         const confidence = normalizeRange(input.confidenceMin, input.confidenceMax, DEFAULT_FILTERS.confidenceMin, DEFAULT_FILTERS.confidenceMax);
+        const avgPostD = normalizeAvgPostDay(input.avgPostD);
         return {
           priceMin: price.min,
           priceMax: price.max,
           changeMin: change.min,
           changeMax: change.max,
-          confidenceMin: clampNullable(confidence.min, 0, 100),
-          confidenceMax: clampNullable(confidence.max, 0, 100)
+          confidenceMin: clamp(confidence.min, 0, 100),
+          confidenceMax: clamp(confidence.max, 0, 100),
+          avgPostD: avgPostD
         };
       }
 
       function normalizeRange(minValue, maxValue, defaultMin, defaultMax) {
-        let min = Number.isFinite(minValue) ? minValue : (Number.isFinite(defaultMin) ? defaultMin : null);
-        let max = Number.isFinite(maxValue) ? maxValue : (Number.isFinite(defaultMax) ? defaultMax : null);
-        if (Number.isFinite(min) && Number.isFinite(max) && min > max) {
+        let min = Number.isFinite(minValue) ? minValue : defaultMin;
+        let max = Number.isFinite(maxValue) ? maxValue : defaultMax;
+        if (min > max) {
           const temp = min;
           min = max;
           max = temp;
@@ -681,7 +837,8 @@
           els.changeMinInput,
           els.changeMaxInput,
           els.confidenceMinInput,
-          els.confidenceMaxInput
+          els.confidenceMaxInput,
+          els.avgPostDInput
         ];
       }
 
@@ -693,9 +850,14 @@
       function passesAllFilters(row) {
         if (!passesPriceAndChangeFilters(row)) return false;
         if (!Number.isFinite(row.confidencePct)) {
-          return !hasConfidenceBound();
+          return isDefaultConfidenceRange();
         }
         if (!inRange(row.confidencePct, state.filters.confidenceMin, state.filters.confidenceMax)) {
+          return false;
+        }
+
+        const avgPostValue = getAvgPostByDay(row, state.filters.avgPostD);
+        if (!Number.isFinite(avgPostValue)) {
           return false;
         }
         return true;
@@ -708,23 +870,32 @@
       }
 
       function formatFilterSummary() {
-        return "Price " + formatBoundPair(state.filters.priceMin, state.filters.priceMax, "$") +
-          ", Change " + formatBoundPair(state.filters.changeMin, state.filters.changeMax, "%") +
-          ", Confidence " + formatBoundPair(state.filters.confidenceMin, state.filters.confidenceMax, "%");
+        return "Price $" + state.filters.priceMin + " to $" + state.filters.priceMax +
+          ", Change " + state.filters.changeMin + "% to " + state.filters.changeMax + "%" +
+          ", Confidence " + state.filters.confidenceMin + "% to " + state.filters.confidenceMax + "%" +
+          ", Avg Post D = " + state.filters.avgPostD;
       }
 
-      function hasConfidenceBound() {
-        return Number.isFinite(state.filters.confidenceMin) || Number.isFinite(state.filters.confidenceMax);
+      function getAvgPostByDay(row, day) {
+        const d = normalizeAvgPostDay(day);
+        if (row.avgByDayPct && Number.isFinite(row.avgByDayPct[d])) {
+          return row.avgByDayPct[d];
+        }
+        if (d === 1) return row.avg1dPct;
+        if (d === 5) return row.avg5dPct;
+        if (d === 10) return row.avg10dPct;
+        return null;
       }
 
-      function formatBoundPair(min, max, suffix) {
-        const left = Number.isFinite(min) ? String(min) + suffix : "unset";
-        const right = Number.isFinite(max) ? String(max) + suffix : "unset";
-        return left + " to " + right;
+      function isDefaultConfidenceRange() {
+        return state.filters.confidenceMin <= DEFAULT_FILTERS.confidenceMin &&
+          state.filters.confidenceMax >= DEFAULT_FILTERS.confidenceMax;
       }
 
-      function boundToInput(value) {
-        return Number.isFinite(value) ? String(value) : "";
+      function normalizeAvgPostDay(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return DEFAULT_FILTERS.avgPostD;
+        return clamp(Math.round(n), 1, 10);
       }
 
       function sortRows(a, b) {
@@ -964,13 +1135,15 @@
             notes.push("Insufficient historical data");
           }
 
-          const gain10Text = formatTenDollarNote(postStats.probGain10Pct);
-          const extraNotes = notes.length ? " | " + notes.join("; ") : "";
-          const noteText = gain10Text + extraNotes;
+          const noteText = notes.length ? notes.join("; ") : "Model ready";
 
           return {
             probUpPct: composite.probabilityPct,
             confidencePct: confidence,
+            avg1dPct: postStats.avg1dPct,
+            avg5dPct: postStats.avg5dPct,
+            avg10dPct: postStats.avg10dPct,
+            avgByDayPct: postStats.avgByDayPct,
             sampleSize: postStats.sampleSize,
             notes: noteText
           };
@@ -978,6 +1151,10 @@
           return {
             probUpPct: null,
             confidencePct: null,
+            avg1dPct: null,
+            avg5dPct: null,
+            avg10dPct: null,
+            avgByDayPct: {},
             sampleSize: 0,
             notes: "Analysis error: " + shortError(error)
           };
@@ -1084,19 +1261,23 @@
       }
 
       function computePostEarningsStats(events, candles, targetN) {
-        const windows = [1, 5, 10];
-        const values = { 1: [], 5: [], 10: [] };
+        const windows = [];
+        for (let d = 1; d <= 10; d += 1) windows.push(d);
+        const values = {};
+        for (const w of windows) values[w] = [];
         const oneDayReturns = [];
         let positive1d = 0;
-        let gain10Count = 0;
         let used = 0;
 
         if (!events.length || !candles.length) {
           return {
+            avg1dPct: null,
+            avg5dPct: null,
+            avg10dPct: null,
+            avgByDayPct: {},
             sampleSize: 0,
             std1d: null,
-            historicalScore: null,
-            probGain10Pct: null
+            historicalScore: null
           };
         }
 
@@ -1112,7 +1293,6 @@
           if (Number.isFinite(metrics[1])) {
             oneDayReturns.push(metrics[1]);
             if (metrics[1] > 0) positive1d += 1;
-            if (metrics[1] >= 0.10) gain10Count += 1;
             used += 1;
           }
 
@@ -1124,9 +1304,13 @@
         const avg1 = mean(values[1]);
         const avg5 = mean(values[5]);
         const avg10 = mean(values[10]);
+        const avgByDayPct = {};
+        for (const w of windows) {
+          const avg = mean(values[w]);
+          avgByDayPct[w] = Number.isFinite(avg) ? avg * 100 : null;
+        }
         const std1d = stddev(oneDayReturns);
         const hitRate = oneDayReturns.length ? positive1d / oneDayReturns.length : null;
-        const probGain10Pct = oneDayReturns.length ? (gain10Count / oneDayReturns.length) * 100 : null;
         const magScore = Number.isFinite(avg1) ? clamp((avg1 / 0.08 + 1) / 2, 0, 1) : null;
         const consistency = Number.isFinite(std1d) ? clamp(1 - (std1d / 0.12), 0, 1) : null;
 
@@ -1136,10 +1320,13 @@
         }
 
         return {
+          avg1dPct: Number.isFinite(avg1) ? avg1 * 100 : null,
+          avg5dPct: Number.isFinite(avg5) ? avg5 * 100 : null,
+          avg10dPct: Number.isFinite(avg10) ? avg10 * 100 : null,
+          avgByDayPct: avgByDayPct,
           sampleSize: oneDayReturns.length,
           std1d: Number.isFinite(std1d) ? std1d : null,
-          historicalScore: historicalScore,
-          probGain10Pct: probGain10Pct
+          historicalScore: historicalScore
         };
       }
 
@@ -1579,9 +1766,7 @@
 
       function inRange(value, min, max) {
         if (!Number.isFinite(value)) return false;
-        if (Number.isFinite(min) && value < min) return false;
-        if (Number.isFinite(max) && value > max) return false;
-        return true;
+        return value >= min && value <= max;
       }
 
       function safeNumber() {
@@ -1595,11 +1780,6 @@
       function clamp(value, min, max) {
         if (!Number.isFinite(value)) return min;
         return Math.max(min, Math.min(max, value));
-      }
-
-      function clampNullable(value, min, max) {
-        if (!Number.isFinite(value)) return null;
-        return clamp(value, min, max);
       }
 
       function fmtCurrency(value) {
@@ -1618,12 +1798,6 @@
         const cls = value > 0.05 ? "pill pill-pos" : (value < -0.05 ? "pill pill-neg" : "pill pill-neu");
         const sign = value > 0 ? "+" : "";
         return "<span class='" + cls + "'>" + sign + value.toFixed(2) + "%</span>";
-      }
-
-      function formatTenDollarNote(probPct) {
-        if (!Number.isFinite(probPct)) return "P($100->$110 in 1D): N/A (not possible)";
-        const verdict = probPct >= 50 ? "possible" : "not possible";
-        return "P($100->$110 in 1D): " + probPct.toFixed(1) + "% (" + verdict + ")";
       }
 
       function formatDateISO(date) {
