@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Earnings Probability Engine</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.8.0/math.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .probability-cell { transition: all 0.3s ease; }
+        .heatmap-high { background-color: #059669; color: white; } /* Green */
+        .heatmap-med { background-color: #d97706; color: white; }  /* Orange */
+        .heatmap-low { background-color: #dc2626; color: white; }   /* Red */
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 p-8">
+
+    <div class="max-w-6xl mx-auto">
+        <header class="mb-10">
+            <h1 class="text-3xl font-bold text-blue-400">Earnings Probability Engine</h1>
+            <p class="text-gray-400 text-sm">Multi-factor analytical breakout prediction</p>
+        </header>
+
+        <div class="bg-gray-800 p-6 rounded-xl shadow-lg mb-8 flex gap-4">
+            <input id="tickerInput" type="text" placeholder="Enter Ticker (e.g. AAPL)" class="bg-gray-700 border border-gray-600 rounded px-4 py-2 w-full focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <button onclick="runAnalysis()" class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded font-bold transition">Analyze</button>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="border-b border-gray-700 text-gray-400 uppercase text-xs">
+                        <th class="p-4">Ticker</th>
+                        <th class="p-4 text-center">Probability Matrix</th>
+                        <th class="p-4">Expected Range</th>
+                        <th class="p-4">Confidence</th>
+                        <th class="p-4">Narrative Logic</th>
+                    </tr>
+                </thead>
+                <tbody id="resultsBody">
+                    </tbody>
+            </table>
+        </div>
+    </div>
+
+<script>
+/**
+ * CONFIGURATION & API KEYS
+ * Replace these with your actual keys
+ */
+const CONFIG = {
+    POLYGON_API_KEY: 'api_key_here', 
+    NEWS_API_KEY: 'api_key_here',
+    WEIGHTS: {
+        HISTORICAL: 0.6,
+        SENTIMENT: 0.4
+    }
+};
+
+/**
+ * MODULE: Sentiment Analysis Logic
+ * Easily swappable weighting system
+ */
+const SentimentEngine = {
+    positiveWords: ['beat', 'growth', 'expansion', 'surge', 'bullish', 'outperform', 'dividend'],
+    negativeWords: ['miss', 'slowdown', 'layoffs', 'debt', 'bearish', 'headwinds', 'deficit'],
+    
+    analyze: function(headlines) {
+        let score = 0;
+        headlines.forEach(text => {
+            const lowerText = text.toLowerCase();
+            this.positiveWords.forEach(w => { if(lowerText.includes(w)) score += 0.2; });
+            this.negativeWords.forEach(w => { if(lowerText.includes(w)) score -= 0.2; });
+        });
+        return Math.max(-1, Math.min(1, score)); // Clamp between -1 and 1
+    }
+};
+
+/**
+ * CORE ENGINE: Probability Calculations
+ */
+function predictOutcomeProbability(history, sentiment, currentPrice) {
+    // 1. Mean Absolute Move (MAM) Logic
+    const moves = history.map(h => Math.abs((h.close - h.open) / h.open));
+    const MAM = math.mean(moves);
+    
+    // 2. Implied Move (IM)
+    const IM = MAM * 1.1;
+
+    // 3. Historical Win Rate (EPS Beaters)
+    const wins = history.filter(h => h.actualEPS > h.estimateEPS).length;
+    const winRate = wins / history.length;
+
+    // 4. Probability of Positive Outlier (P_pos)
+    // Formula: P_pos = (Historical Win Rate * 0.6) + (S * 0.4)
+    const pPosRaw = (winRate * CONFIG.WEIGHTS.HISTORICAL) + (sentiment * CONFIG.WEIGHTS.SENTIMENT);
+    const pPos = Math.max(0, Math.min(1, pPosRaw)); 
+
+    // 5. Confidence Interval
+    // Lower SD in historical moves = Higher Confidence Score
+    const stdDev = math.std(moves);
+    const confidenceScore = Math.max(0, 1 - (stdDev * 5)); // Penalty for erratic moves
+
+    return {
+        pPos,
+        expectedMove: IM,
+        upperBound: currentPrice * (1 + IM),
+        lowerBound: currentPrice * (1 - IM),
+        confidence: confidenceScore,
+        winRate: winRate
+    };
+}
+
+/**
+ * UI CONTROLLER
+ */
+async function runAnalysis() {
+    const ticker = document.getElementById('tickerInput').value.toUpperCase();
+    if(!ticker) return;
+
+    try {
+        // MOCK DATA FETCH (Integration Placeholder)
+        // In production, use fetch() to hit Polygon/NewsAPI endpoints
+        const mockCurrentPrice = 150.00;
+        const mockHistory = [
+            { actualEPS: 1.2, estimateEPS: 1.1, open: 140, close: 145 },
+            { actualEPS: 1.5, estimateEPS: 1.3, open: 145, close: 152 },
+            { actualEPS: 0.9, estimateEPS: 1.0, open: 152, close: 148 },
+            { actualEPS: 1.1, estimateEPS: 1.0, open: 148, close: 150 },
+        ];
+        const mockHeadlines = ["Company announces expansion", "Growth beats expectations", "Slight layoff concerns"];
+        
+        const sentiment = SentimentEngine.analyze(mockHeadlines);
+        const analysis = predictOutcomeProbability(mockHistory, sentiment, mockCurrentPrice);
+        
+        renderRow(ticker, analysis, sentiment);
+    } catch (err) {
+        console.error("Analysis Failed", err);
+    }
+}
+
+function renderRow(ticker, data, sentiment) {
+    const tbody = document.getElementById('resultsBody');
+    const probPct = (data.pPos * 100).toFixed(1);
+    
+    let heatmapClass = 'heatmap-med';
+    if(data.pPos > 0.65) heatmapClass = 'heatmap-high';
+    if(data.pPos < 0.40) heatmapClass = 'heatmap-low';
+
+    let narrative = data.pPos > 0.5 
+        ? `Positive outlook based on ${Math.round(data.winRate*100)}% beat rate and ${sentiment > 0 ? 'bullish' : 'neutral'} sentiment.`
+        : `Caution advised: erratic moves and poor historical consistency identified.`;
+
+    const row = `
+        <tr class="border-b border-gray-800 hover:bg-gray-850 transition">
+            <td class="p-4 font-bold text-blue-300">${ticker}</td>
+            <td class="p-4 text-center">
+                <div class="px-3 py-1 rounded-full text-sm font-bold ${heatmapClass}">
+                    ${probPct}% Surprise Prob.
+                </div>
+            </td>
+            <td class="p-4 font-mono text-sm">
+                <span class="text-green-400">$${data.upperBound.toFixed(2)}</span> / 
+                <span class="text-red-400">$${data.lowerBound.toFixed(2)}</span>
+            </td>
+            <td class="p-4">
+                <div class="w-full bg-gray-700 h-2 rounded-full">
+                    <div class="bg-blue-500 h-2 rounded-full" style="width: ${data.confidence * 100}%"></div>
+                </div>
+            </td>
+            <td class="p-4 text-xs text-gray-400 italic max-w-xs">${narrative}</td>
+        </tr>
+    `;
+    tbody.innerHTML = row + tbody.innerHTML;
+}
+</script>
+</body>
+</html>
